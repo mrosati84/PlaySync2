@@ -1,5 +1,6 @@
 playsync2
 *.o
+*.d
 tests/test_sync
 tests/test_proto
 tests/fake_mpv
