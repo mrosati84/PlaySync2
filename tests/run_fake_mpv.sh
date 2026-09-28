@@ -72,6 +72,13 @@ awk -v p="$PB" 'BEGIN{ if (p < 45.0) { print "FAIL: B did not follow the forward
 # Both must have converged.
 awk -v a="$PA" -v b="$PB" 'BEGIN{ d=a-b; if(d<0)d=-d; if (d > 0.6) { printf "FAIL: A and B diverged by %.3f s\n", d; exit 1 } }' || fail=1
 
+# A redundant seek (target == current time-pos) must not leave a pending
+# command that expires into a spurious warning (RLY-100).
+if grep -q "command not confirmed" "$TMP/a.err" "$TMP/b.err" 2>/dev/null; then
+    echo "FAIL: spurious 'command not confirmed' warning"
+    fail=1
+fi
+
 if [ "$fail" = 0 ]; then
     echo "ok: fake-mpv integration (A followed by B, converged)"
 fi

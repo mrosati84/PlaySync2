@@ -237,6 +237,12 @@ static void handle_line(server *s, sconn *c, const char *line, size_t len)
     int is_ping = strcmp(t, "ping") == 0;
     int is_bye = strcmp(t, "bye") == 0;
     int is_error = strcmp(t, "error") == 0;
+    char bye_reason[PS_REASON_LEN] = "";
+    if (is_bye) {
+        const cJSON *ritem = cJSON_GetObjectItemCaseSensitive(root, "reason");
+        if (cJSON_IsString(ritem) && ritem->valuestring)
+            snprintf(bye_reason, sizeof(bye_reason), "%s", ritem->valuestring);
+    }
     cJSON_Delete(root);
 
     if (is_hb || is_intent) {
@@ -246,7 +252,8 @@ static void handle_line(server *s, sconn *c, const char *line, size_t len)
         proto_parse(line, len, &m);
         conn_send(c, proto_encode_pong(m.n));
     } else if (is_bye) {
-        log_info("server: member '%s' sent bye", c->id);
+        log_info("server: member '%s' sent bye (%s)", c->id,
+                 bye_reason[0] ? bye_reason : "unspecified");
         c->ready = 0;
         c->closing = 1;
     } else if (is_error) {

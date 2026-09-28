@@ -524,7 +524,7 @@ static void do_tick(struct client *c, double now)
 
 static void show_status(struct client *c, double now)
 {
-    if (g_log_level != 1) /* quiet suppresses it; verbose uses traces */
+    if (g_log_level < 1) /* only --quiet suppresses the live status (FR-6.1) */
         return;
     double g = group_ref(c, now);
     double pos = c->mpv ? mpv_pos(c->mpv) : 0.0;
@@ -608,6 +608,7 @@ int client_run(const client_config *cfg)
     }
 
     int exit_code = 0;
+    int mpv_exit = 0;
     double now = tb_now();
     c.last_hb = now;
     c.last_ping = now;
@@ -628,6 +629,7 @@ int client_run(const client_config *cfg)
                 else if (WIFSIGNALED(status))
                     exit_code = 128 + WTERMSIG(status);
                 log_info("client: mpv exited (status %d)", exit_code);
+                mpv_exit = 1;
                 break;
             }
         }
@@ -694,11 +696,13 @@ int client_run(const client_config *cfg)
                             else if (WIFSIGNALED(status))
                                 exit_code = 128 + WTERMSIG(status);
                             log_info("client: mpv exited (status %d)", exit_code);
+                            mpv_exit = 1;
                             mpv_destroy(c.mpv, 0);
                             c.mpv = NULL;
                             g_mpv_pid = 0;
                         } else {
                             log_error("client: mpv IPC socket failed; killing mpv");
+                            mpv_exit = 1;
                             mpv_destroy(c.mpv, 1);
                             c.mpv = NULL;
                             g_mpv_pid = 0;
@@ -742,11 +746,13 @@ int client_run(const client_config *cfg)
         }
     }
 
-    if (g_log_level == 1)
+    if (g_log_level >= 1)
         fprintf(stderr, "\n");
     if (c.server_fd >= 0) {
-        char *bye = proto_encode_bye("user_quit");
+        char *bye = proto_encode_bye(mpv_exit ? "mpv_exit" : "user_quit");
         if (bye) {
+            if (g_log_level >= 2)
+                log_trace("srv <- %s", bye);
             obuf_append(&c.out, bye, strlen(bye));
             obuf_append(&c.out, "\n", 1);
             (void)obuf_flush(c.server_fd, &c.out);

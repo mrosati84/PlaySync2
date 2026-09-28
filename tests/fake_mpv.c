@@ -129,8 +129,12 @@ static void emit_for(int id)
     }
 }
 
-static void emit_seek_sequence(void)
+static void emit_seek_sequence(double from)
 {
+    /* Real MPV emits no property-change when the seek lands on the position it
+     * is already at; mimic that so a redundant seek is observable. */
+    if (st.pos == from)
+        return;
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "event", "seek");
     send_obj(o);
@@ -193,9 +197,10 @@ static void handle_command(const cJSON *root)
             reply(rid, NULL);
             emit_num(6, "speed", st.speed, 1);
         } else if (strcmp(nm, "time-pos") == 0 && cJSON_IsNumber(vj)) {
+            double from = st.pos;
             st.pos = vj->valuedouble;
             reply(rid, NULL);
-            emit_seek_sequence();
+            emit_seek_sequence(from);
         } else {
             reply(rid, "property unavailable");
         }
@@ -217,12 +222,13 @@ static void handle_command(const cJSON *root)
         const cJSON *vj = cJSON_GetArrayItem(cmd, 1);
         if (cJSON_IsNumber(vj)) {
             double target = vj->valuedouble;
+            double from = st.pos;
             /* Quantise to 1/15 s to mimic keyframe landing. */
             double frame = 1.0 / 15.0;
             st.pos = floor(target / frame) * frame;
             st.eof = 0;
             reply(rid, NULL);
-            emit_seek_sequence();
+            emit_seek_sequence(from);
         } else {
             reply(rid, "invalid parameter");
         }
@@ -385,9 +391,10 @@ int main(int argc, char **argv)
         }
         if (seek_at >= 0.0 && !seek_done && elapsed >= seek_at) {
             seek_done = 1;
+            double from = st.pos;
             st.pos = seek_target;
             st.eof = 0;
-            emit_seek_sequence();
+            emit_seek_sequence(from);
         }
         if (pause_at >= 0.0 && !pause_done && elapsed >= pause_at) {
             pause_done = 1;

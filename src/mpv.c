@@ -209,6 +209,10 @@ void mpv_cmd_seek(mpv_t *m, double pos)
 {
     if (m->fd < 0)
         return;
+    /* Seeking to where MPV already is emits no property-change, so a pending
+     * record would only expire into a spurious "not confirmed" warning. */
+    if (m->have_time_pos && fabs(m->time_pos - pos) < 1e-3)
+        return;
     double deadline = tb_now() + (m->rtt * 3.0 > 0.5 ? m->rtt * 3.0 : 0.5);
     m->p_pos.active = 1;
     m->p_pos.value = pos;

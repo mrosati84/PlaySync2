@@ -33,6 +33,7 @@ test: $(BIN) $(TESTBINS) tests/fake_mpv
 	@echo "== unit: proto ==";       ./tests/test_proto
 	@echo "== server protocol ==";   sh tests/run_protocol.sh
 	@echo "== mpv exit ==";          sh tests/run_mpv_exit.sh
+	@echo "== redundant seek ==";    sh tests/run_redundant_seek.sh
 	@echo "== reconnect ==";         sh tests/run_reconnect.sh
 	@echo "== fake-mpv integration =="; sh tests/run_fake_mpv.sh
 
