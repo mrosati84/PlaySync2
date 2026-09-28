@@ -655,7 +655,7 @@ Every question raised during specification, with the answer that produced this d
 
 ## 14. Implementation notes
 
-- **Layout:** `src/` (`main.c`, `server.c`, `client.c`, `net.c`, `proto.c`, `json_mut.c`,
+- **Layout:** `src/` (`main.c`, `server.c`, `client.c`, `net.c`, `proto.c`,
   `mpv.c`, `sync.c`, `timebase.c`), `vendor/cJSON/`, `tests/` (`test_sync.c`, `test_proto.c`,
   `fake_mpv.c`), `Makefile`. `timebase.c` wraps the local monotonic clock and nothing else:
   it is not a clock *synchronizer*, per invariant A3.

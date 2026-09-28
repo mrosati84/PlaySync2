@@ -1,5 +1,4 @@
 #include "server.h"
-#include "json_mut.h"
 #include "net.h"
 #include "proto.h"
 #include "timebase.h"
@@ -53,7 +52,7 @@ static void conn_send(sconn *c, char *msg)
         return;
     obuf_append(&c->out, msg, strlen(msg));
     obuf_append(&c->out, "\n", 1);
-    jm_free(msg);
+    free(msg);
 }
 
 static int ready_count(server *s)
@@ -65,12 +64,12 @@ static int ready_count(server *s)
     return n;
 }
 
-static void broadcast_roster(server *s)
+/* Snapshot the roster from the ready connections; returns the member count. */
+static int fill_members(const server *s, proto_member *members)
 {
-    proto_member members[PS_MAX_MEMBERS_CEIL];
     int n = 0;
     for (int i = 0; i < s->nconns && n < PS_MAX_MEMBERS_CEIL; i++) {
-        sconn *c = s->conns[i];
+        const sconn *c = s->conns[i];
         if (!c->ready)
             continue;
         snprintf(members[n].id, sizeof(members[n].id), "%s", c->id);
@@ -78,6 +77,13 @@ static void broadcast_roster(server *s)
         members[n].observer = c->observer;
         n++;
     }
+    return n;
+}
+
+static void broadcast_roster(server *s)
+{
+    proto_member members[PS_MAX_MEMBERS_CEIL];
+    int n = fill_members(s, members);
     char *msg = proto_encode_roster(members, n);
     if (!msg)
         return;
@@ -88,7 +94,7 @@ static void broadcast_roster(server *s)
         obuf_append(&c->out, msg, strlen(msg));
         obuf_append(&c->out, "\n", 1);
     }
-    jm_free(msg);
+    free(msg);
 }
 
 static void relay_except(server *s, sconn *from, const char *msg)
@@ -166,16 +172,7 @@ static void handle_hello(server *s, sconn *c, const pmsg *m)
     s->accepted++;
 
     proto_member members[PS_MAX_MEMBERS_CEIL];
-    int n = 0;
-    for (int i = 0; i < s->nconns && n < PS_MAX_MEMBERS_CEIL; i++) {
-        sconn *o = s->conns[i];
-        if (!o->ready)
-            continue;
-        snprintf(members[n].id, sizeof(members[n].id), "%s", o->id);
-        snprintf(members[n].name, sizeof(members[n].name), "%s", o->name);
-        members[n].observer = o->observer;
-        n++;
-    }
+    int n = fill_members(s, members);
     char *w = proto_encode_welcome(s->session, c->id, members, n);
     conn_send(c, w);
     log_info("server: member '%s' (%s) joined%s [%d/%d]", c->name, c->id,
@@ -183,23 +180,37 @@ static void handle_hello(server *s, sconn *c, const pmsg *m)
     broadcast_roster(s);
 }
 
-/* Blind relay for hb/intent: only "from" is touched. */
-static void handle_relay(server *s, sconn *c, const char *line, size_t len)
+static void reject_bad_json(sconn *c)
+{
+    conn_send(c, proto_encode_error(ERR_BAD_JSON, "not a JSON object", 0));
+}
+
+/* Parse a line as a JSON object; on failure reject the bad JSON and return NULL. */
+static cJSON *parse_line_object(sconn *c, const char *line, size_t len)
 {
     cJSON *root = cJSON_ParseWithLength(line, len);
     if (root == NULL || !cJSON_IsObject(root)) {
         cJSON_Delete(root);
-        conn_send(c, proto_encode_error(ERR_BAD_JSON, "not a JSON object", 0));
-        return;
+        reject_bad_json(c);
+        return NULL;
     }
+    return root;
+}
+
+/* Blind relay for hb/intent: only "from" is touched. */
+static void handle_relay(server *s, sconn *c, const char *line, size_t len)
+{
+    cJSON *root = parse_line_object(c, line, len);
+    if (root == NULL)
+        return;
     cJSON_DeleteItemFromObjectCaseSensitive(root, "from");
     cJSON_AddStringToObject(root, "from", c->id);
-    char *msg = jm_print(root);
+    char *msg = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (msg) {
         relay_except(s, c, msg);
         s->relayed++;
-        jm_free(msg);
+        free(msg);
     }
 }
 
@@ -224,12 +235,9 @@ static void handle_line(server *s, sconn *c, const char *line, size_t len)
         return;
     }
 
-    cJSON *root = cJSON_ParseWithLength(line, len);
-    if (root == NULL || !cJSON_IsObject(root)) {
-        cJSON_Delete(root);
-        conn_send(c, proto_encode_error(ERR_BAD_JSON, "not a JSON object", 0));
+    cJSON *root = parse_line_object(c, line, len);
+    if (root == NULL)
         return;
-    }
     const cJSON *titem = cJSON_GetObjectItemCaseSensitive(root, "t");
     const char *t = (cJSON_IsString(titem) && titem->valuestring) ? titem->valuestring : "";
     int is_hb = strcmp(t, "hb") == 0;

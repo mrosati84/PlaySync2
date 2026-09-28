@@ -1,5 +1,4 @@
 #include "proto.h"
-#include "json_mut.h"
 
 #include "cJSON.h"
 
@@ -102,6 +101,24 @@ static int read_string(const cJSON *obj, const char *key, char *out, size_t outl
     return 0;
 }
 
+/* Append root's "members" array to out, ignoring a missing/non-array field. */
+static void parse_members(const cJSON *root, pmsg *out)
+{
+    const cJSON *members = cJSON_GetObjectItemCaseSensitive(root, "members");
+    if (!cJSON_IsArray(members))
+        return;
+    const cJSON *it = NULL;
+    cJSON_ArrayForEach(it, members) {
+        if (out->nmembers >= PS_MAX_MEMBERS_CEIL)
+            break;
+        proto_member *m = &out->members[out->nmembers];
+        copy_str(m->id, sizeof(m->id), it, "id");
+        copy_str(m->name, sizeof(m->name), it, "name");
+        m->observer = read_bool(it, "observer");
+        out->nmembers++;
+    }
+}
+
 int proto_parse(const char *line, size_t len, pmsg *out)
 {
     proto_init(out);
@@ -134,34 +151,10 @@ int proto_parse(const char *line, size_t len, pmsg *out)
             out->v = (int)v;
         copy_str(out->session, sizeof(out->session), root, "session");
         copy_str(out->you, sizeof(out->you), root, "you");
-        const cJSON *members = cJSON_GetObjectItemCaseSensitive(root, "members");
-        if (cJSON_IsArray(members)) {
-            const cJSON *it = NULL;
-            cJSON_ArrayForEach(it, members) {
-                if (out->nmembers >= PS_MAX_MEMBERS_CEIL)
-                    break;
-                proto_member *m = &out->members[out->nmembers];
-                copy_str(m->id, sizeof(m->id), it, "id");
-                copy_str(m->name, sizeof(m->name), it, "name");
-                m->observer = read_bool(it, "observer");
-                out->nmembers++;
-            }
-        }
+        parse_members(root, out);
     } else if (strcmp(t, "roster") == 0) {
         out->t = MSG_ROSTER;
-        const cJSON *members = cJSON_GetObjectItemCaseSensitive(root, "members");
-        if (cJSON_IsArray(members)) {
-            const cJSON *it = NULL;
-            cJSON_ArrayForEach(it, members) {
-                if (out->nmembers >= PS_MAX_MEMBERS_CEIL)
-                    break;
-                proto_member *m = &out->members[out->nmembers];
-                copy_str(m->id, sizeof(m->id), it, "id");
-                copy_str(m->name, sizeof(m->name), it, "name");
-                m->observer = read_bool(it, "observer");
-                out->nmembers++;
-            }
-        }
+        parse_members(root, out);
     } else if (strcmp(t, "hb") == 0) {
         out->t = MSG_HB;
         copy_str(out->id, sizeof(out->id), root, "from");
@@ -248,7 +241,7 @@ char *proto_encode_hello(const char *id, const char *name, int observer)
     cJSON_AddStringToObject(o, "id", id);
     cJSON_AddStringToObject(o, "name", name);
     cJSON_AddBoolToObject(o, "observer", observer ? 1 : 0);
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }
@@ -283,7 +276,7 @@ char *proto_encode_welcome(const char *session, const char *you,
     cJSON *arr = members_array(members, n);
     if (arr)
         cJSON_AddItemToObject(o, "members", arr);
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }
@@ -297,7 +290,7 @@ char *proto_encode_roster(const proto_member *members, int n)
     cJSON *arr = members_array(members, n);
     if (arr)
         cJSON_AddItemToObject(o, "members", arr);
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }
@@ -309,7 +302,7 @@ char *proto_encode_hb(const char *from, int has_pos, double pos, pstate st,
     if (!o)
         return NULL;
     add_hb(o, from, has_pos, pos, st, speed, joining, from != NULL);
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }
@@ -324,7 +317,7 @@ char *proto_encode_intent(const char *from, intent_act act, double pos)
         cJSON_AddStringToObject(o, "from", from);
     cJSON_AddStringToObject(o, "act", act_name(act));
     cJSON_AddNumberToObject(o, "pos", pos);
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }
@@ -336,7 +329,7 @@ char *proto_encode_ping(long n)
         return NULL;
     cJSON_AddStringToObject(o, "t", "ping");
     cJSON_AddNumberToObject(o, "n", (double)n);
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }
@@ -348,7 +341,7 @@ char *proto_encode_pong(long n)
         return NULL;
     cJSON_AddStringToObject(o, "t", "pong");
     cJSON_AddNumberToObject(o, "n", (double)n);
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }
@@ -360,7 +353,7 @@ char *proto_encode_bye(const char *reason)
         return NULL;
     cJSON_AddStringToObject(o, "t", "bye");
     cJSON_AddStringToObject(o, "reason", reason ? reason : "shutdown");
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }
@@ -374,7 +367,7 @@ char *proto_encode_error(err_code code, const char *emsg, int fatal)
     cJSON_AddStringToObject(o, "code", err_name(code));
     cJSON_AddStringToObject(o, "msg", emsg ? emsg : "");
     cJSON_AddBoolToObject(o, "fatal", fatal ? 1 : 0);
-    char *s = jm_print(o);
+    char *s = cJSON_PrintUnformatted(o);
     cJSON_Delete(o);
     return s;
 }

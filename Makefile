@@ -25,10 +25,10 @@ $(BIN): $(OBJ)
 tests/test_sync: tests/test_sync.c src/sync.c $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDLIBS)
 
-tests/test_proto: tests/test_proto.c src/proto.c src/json_mut.c vendor/cJSON/cJSON.c $(HDRS)
+tests/test_proto: tests/test_proto.c src/proto.c vendor/cJSON/cJSON.c $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDLIBS)
 
-tests/fake_mpv: tests/fake_mpv.c src/net.c src/timebase.c src/json_mut.c vendor/cJSON/cJSON.c $(HDRS)
+tests/fake_mpv: tests/fake_mpv.c src/net.c src/timebase.c vendor/cJSON/cJSON.c $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDLIBS)
 
 test: $(BIN) $(TESTBINS) $(TESTAUX)

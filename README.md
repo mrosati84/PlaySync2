@@ -81,7 +81,7 @@ what the unit tests in `tests/test_sync.c` exercise directly.
 ## Layout
 
 ```
-src/        main.c server.c client.c net.c proto.c json_mut.c mpv.c sync.c timebase.c
+src/        main.c server.c client.c net.c proto.c mpv.c sync.c timebase.c
 vendor/cJSON/   vendored cJSON
 tests/      test_sync.c test_proto.c fake_mpv.c + integration scripts
 Makefile    make / make test / make clean / make e2e

@@ -1,5 +1,4 @@
 #include "mpv.h"
-#include "json_mut.h"
 #include "net.h"
 #include "timebase.h"
 
@@ -118,10 +117,10 @@ static void mpv_send_obj(mpv_t *m, cJSON *root)
     if (root == NULL)
         return;
     cJSON_AddNumberToObject(root, "request_id", (double)(++m->req_id));
-    char *s = jm_print(root);
+    char *s = cJSON_PrintUnformatted(root);
     if (s) {
         mpv_send_raw(m, s);
-        jm_free(s);
+        free(s);
     }
     cJSON_Delete(root);
 }

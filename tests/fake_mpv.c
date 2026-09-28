@@ -13,7 +13,6 @@
  * It starts with a file loaded and paused, matching the client's injected
  * --pause=yes (SPEC §5.1), and accepts exactly one IPC client.
  */
-#include "json_mut.h"
 #include "net.h"
 #include "timebase.h"
 
@@ -72,10 +71,10 @@ static void send_raw(const char *s)
 
 static void send_obj(cJSON *root)
 {
-    char *s = jm_print(root);
+    char *s = root ? cJSON_PrintUnformatted(root) : NULL;
     if (s) {
         send_raw(s);
-        jm_free(s);
+        free(s);
     }
     cJSON_Delete(root);
 }
