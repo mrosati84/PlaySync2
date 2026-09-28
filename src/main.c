@@ -84,7 +84,7 @@ void ps_uuid4(char *out, size_t outlen)
 static void usage(FILE *f)
 {
     fprintf(f,
-        "playsync2 " PS_VERSION_STR "\n"
+        PS_VERSION_STR "\n"
         "\n"
         "Usage:\n"
         "  playsync2 server [options]\n"
@@ -111,7 +111,10 @@ static void usage(FILE *f)
 
 static const char *default_name(void)
 {
-    static char buf[PS_NAME_LEN];
+    /* Headroom over the wire field (PS_NAME_LEN) so the composed
+     * "user@host" is not silently clipped before it is copied into the
+     * fixed-size proto name field. */
+    static char buf[PS_NAME_LEN + 128];
     const char *user = getenv("USER");
     if (!user)
         user = getenv("LOGNAME");
