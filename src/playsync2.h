@@ -94,7 +94,10 @@ const char *err_name(err_code c);
 const char *act_name(intent_act a);
 intent_act act_from_name(const char *s);
 
-/* Fill out with a random UUIDv4 (36 chars + NUL). out must hold >= 37 bytes. */
-void ps_uuid4(char *out, size_t outlen);
+/*
+ * Fill out with a random UUIDv4 (36 chars + NUL). Requires outlen >= 37.
+ * Returns 0 on success, -1 when outlen is too small (out[0] is cleared).
+ */
+int ps_uuid4(char *out, size_t outlen);
 
 #endif /* PLAYSYNC2_H */

@@ -2,6 +2,7 @@
 
 #include "cJSON.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -91,6 +92,34 @@ static int read_number(const cJSON *obj, const char *key, double *out)
     return 0;
 }
 
+/*
+ * Narrow a JSON number to int/long without invoking undefined behaviour on
+ * hostile input. NaN maps to 0; out-of-range values clamp to the type limits
+ * (the upper long bound is compared with >= because (double)LONG_MAX rounds
+ * up to 2^63, which cannot be represented as a long).
+ */
+static int clamp_int(double v)
+{
+    if (!(v == v)) /* NaN */
+        return 0;
+    if (v > (double)INT_MAX)
+        return INT_MAX;
+    if (v < (double)INT_MIN)
+        return INT_MIN;
+    return (int)v;
+}
+
+static long clamp_long(double v)
+{
+    if (!(v == v)) /* NaN */
+        return 0;
+    if (v >= (double)LONG_MAX)
+        return LONG_MAX;
+    if (v < (double)LONG_MIN)
+        return LONG_MIN;
+    return (long)v;
+}
+
 static int read_string(const cJSON *obj, const char *key, char *out, size_t outlen)
 {
     const cJSON *it = cJSON_GetObjectItemCaseSensitive(obj, key);
@@ -140,7 +169,7 @@ int proto_parse(const char *line, size_t len, pmsg *out)
         out->t = MSG_HELLO;
         double v = 0;
         if (read_number(root, "v", &v))
-            out->v = (int)v;
+            out->v = clamp_int(v);
         copy_str(out->id, sizeof(out->id), root, "id");
         copy_str(out->name, sizeof(out->name), root, "name");
         out->observer = read_bool(root, "observer");
@@ -148,7 +177,7 @@ int proto_parse(const char *line, size_t len, pmsg *out)
         out->t = MSG_WELCOME;
         double v = 0;
         if (read_number(root, "v", &v))
-            out->v = (int)v;
+            out->v = clamp_int(v);
         copy_str(out->session, sizeof(out->session), root, "session");
         copy_str(out->you, sizeof(out->you), root, "you");
         parse_members(root, out);
@@ -183,12 +212,12 @@ int proto_parse(const char *line, size_t len, pmsg *out)
         out->t = MSG_PING;
         double n = 0;
         read_number(root, "n", &n);
-        out->n = (long)n;
+        out->n = clamp_long(n);
     } else if (strcmp(t, "pong") == 0) {
         out->t = MSG_PONG;
         double n = 0;
         read_number(root, "n", &n);
-        out->n = (long)n;
+        out->n = clamp_long(n);
     } else if (strcmp(t, "bye") == 0) {
         out->t = MSG_BYE;
         read_string(root, "reason", out->reason, sizeof(out->reason));

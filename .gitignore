@@ -3,5 +3,7 @@ playsync2
 *.d
 tests/test_sync
 tests/test_proto
+tests/test_robust
 tests/fake_mpv
+tests/fail_recv.so
 *.sock

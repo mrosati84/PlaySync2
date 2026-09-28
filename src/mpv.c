@@ -107,8 +107,8 @@ static void mpv_send_raw(mpv_t *m, const char *json)
         return;
     if (m->verbose)
         log_trace("mpv <- %s", json);
-    obuf_append(&m->out, json, strlen(json));
-    obuf_append(&m->out, "\n", 1);
+    if (obuf_append_line(&m->out, json, strlen(json)) != 0)
+        log_warn("mpv: out of memory queueing an IPC command");
     (void)obuf_flush(m->fd, &m->out);
 }
 

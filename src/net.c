@@ -209,24 +209,59 @@ void obuf_free(obuf *o)
     o->len = o->cap = o->off = 0;
 }
 
-int obuf_append(obuf *o, const void *data, size_t n)
+/* Allocation hook for tests; NULL selects realloc. */
+void *(*obuf_grow_alloc)(void *, size_t) = NULL;
+
+static int obuf_grow(obuf *o, size_t extra)
 {
     if (o->off == o->len) {
         o->off = 0;
         o->len = 0;
     }
-    if (o->len + n > o->cap) {
-        size_t ncap = (o->cap == 0) ? 4096 : o->cap;
-        while (ncap < o->len + n)
-            ncap *= 2;
-        char *nb = realloc(o->buf, ncap);
-        if (nb == NULL)
-            return -1;
-        o->buf = nb;
-        o->cap = ncap;
+    if (extra > SIZE_MAX - o->len)
+        return -1; /* size_t overflow: the request can never be satisfied */
+    size_t need = o->len + extra;
+    if (need <= o->cap)
+        return 0;
+    size_t ncap = (o->cap == 0) ? 4096 : o->cap;
+    while (ncap < need) {
+        if (ncap > SIZE_MAX / 2) {
+            ncap = need;
+            break;
+        }
+        ncap *= 2;
     }
-    memcpy(o->buf + o->len, data, n);
+    void *(*alloc)(void *, size_t) = obuf_grow_alloc ? obuf_grow_alloc : realloc;
+    char *nb = alloc(o->buf, ncap);
+    if (nb == NULL)
+        return -1;
+    o->buf = nb;
+    o->cap = ncap;
+    return 0;
+}
+
+int obuf_append(obuf *o, const void *data, size_t n)
+{
+    if (obuf_grow(o, n) != 0)
+        return -1;
+    if (n > 0)
+        memcpy(o->buf + o->len, data, n);
     o->len += n;
+    return 0;
+}
+
+int obuf_append_line(obuf *o, const char *msg, size_t len)
+{
+    if (len == SIZE_MAX)
+        return -1;
+    /* Reserve the payload and the framing newline up front so a partial
+     * frame is never queued; on failure the buffer is left unchanged. */
+    if (obuf_grow(o, len + 1) != 0)
+        return -1;
+    if (len > 0)
+        memcpy(o->buf + o->len, msg, len);
+    o->len += len;
+    o->buf[o->len++] = '\n';
     return 0;
 }
 

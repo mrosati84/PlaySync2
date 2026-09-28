@@ -50,8 +50,10 @@ static void conn_send(sconn *c, char *msg)
 {
     if (msg == NULL)
         return;
-    obuf_append(&c->out, msg, strlen(msg));
-    obuf_append(&c->out, "\n", 1);
+    if (obuf_append_line(&c->out, msg, strlen(msg)) != 0) {
+        log_warn("server: out of memory queueing a message; closing connection");
+        c->closing = 1;
+    }
     free(msg);
 }
 
@@ -91,8 +93,10 @@ static void broadcast_roster(server *s)
         sconn *c = s->conns[i];
         if (!c->ready)
             continue;
-        obuf_append(&c->out, msg, strlen(msg));
-        obuf_append(&c->out, "\n", 1);
+        if (obuf_append_line(&c->out, msg, strlen(msg)) != 0) {
+            log_warn("server: out of memory queueing roster; closing connection");
+            c->closing = 1;
+        }
     }
     free(msg);
 }
@@ -104,8 +108,10 @@ static void relay_except(server *s, sconn *from, const char *msg)
         sconn *c = s->conns[i];
         if (!c->ready || c == from || c->closing)
             continue;
-        obuf_append(&c->out, msg, len);
-        obuf_append(&c->out, "\n", 1);
+        if (obuf_append_line(&c->out, msg, len) != 0) {
+            log_warn("server: out of memory relaying message; closing connection");
+            c->closing = 1;
+        }
     }
 }
 
@@ -294,8 +300,10 @@ static void process_input(server *s, sconn *c)
             if (c->lr.overflow) {
                 conn_send(c, proto_encode_error(ERR_TOO_LARGE, "message exceeds 64 KiB", 1));
                 c->closing = 1;
+                log_warn("server: member exceeded the 64 KiB message cap");
             } else {
-                return;
+                log_warn("server: read error on connection; closing");
+                c->closing = 1;
             }
             return;
         } else {
@@ -310,7 +318,10 @@ int server_run(const server_config *cfg)
     memset(&s, 0, sizeof(s));
     s.cfg = cfg;
     s.listen_fd = -1;
-    ps_uuid4(s.session, sizeof(s.session));
+    if (ps_uuid4(s.session, sizeof(s.session)) != 0) {
+        log_error("server: cannot generate a session id");
+        return 1;
+    }
     s.last_stats = tb_now();
 
     struct sigaction sa;

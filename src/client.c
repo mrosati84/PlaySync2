@@ -76,6 +76,8 @@ static struct client *g_client = NULL;
 static volatile sig_atomic_t g_stop = 0;
 static volatile sig_atomic_t g_mpv_pid = 0;
 
+static void schedule_backoff(struct client *c, const char *why);
+
 static void on_signal(int sig)
 {
     g_stop = 1;
@@ -164,8 +166,12 @@ static void client_send(struct client *c, char *msg)
         return;
     if (g_log_level >= 2)
         log_trace("srv <- %s", msg);
-    obuf_append(&c->out, msg, strlen(msg));
-    obuf_append(&c->out, "\n", 1);
+    if (obuf_append_line(&c->out, msg, strlen(msg)) != 0) {
+        log_warn("client: out of memory queueing a message");
+        free(msg);
+        schedule_backoff(c, "out of memory");
+        return;
+    }
     if (c->server_fd >= 0)
         (void)obuf_flush(c->server_fd, &c->out);
     free(msg);
@@ -455,7 +461,10 @@ static void try_connect(struct client *c)
     lr_init(&c->lr);
     obuf_free(&c->out);
     obuf_init(&c->out);
-    ps_uuid4(c->self_id, sizeof(c->self_id));
+    if (ps_uuid4(c->self_id, sizeof(c->self_id)) != 0) {
+        schedule_backoff(c, "cannot generate a client id");
+        return;
+    }
     c->ss = SS_CONNECTING;
     c->last_server_rx = tb_now();
     c->last_ping = 0;
@@ -753,9 +762,8 @@ int client_run(const client_config *cfg)
         if (bye) {
             if (g_log_level >= 2)
                 log_trace("srv <- %s", bye);
-            obuf_append(&c.out, bye, strlen(bye));
-            obuf_append(&c.out, "\n", 1);
-            (void)obuf_flush(c.server_fd, &c.out);
+            if (obuf_append_line(&c.out, bye, strlen(bye)) == 0)
+                (void)obuf_flush(c.server_fd, &c.out);
             free(bye);
         }
         net_close(c.server_fd);

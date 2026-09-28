@@ -43,7 +43,19 @@ typedef struct {
 void obuf_init(obuf *o);
 void obuf_free(obuf *o);
 int obuf_append(obuf *o, const void *data, size_t n);
+/*
+ * Append a complete framed line (payload plus a trailing '\n') atomically:
+ * either the whole frame lands or nothing does. Returns 0 on success and -1
+ * when the buffer cannot grow (message dropped, prior contents untouched).
+ */
+int obuf_append_line(obuf *o, const char *msg, size_t len);
 int obuf_pending(const obuf *o);
+
+/*
+ * Test seam: allocation function used by the output buffer to grow.
+ * Defaults to realloc when NULL. Tests set a failing stub to exercise OOM.
+ */
+extern void *(*obuf_grow_alloc)(void *, size_t);
 /* Drain as much as possible. 0 = drained, 1 = still pending, -1 = error. */
 int obuf_flush(int fd, obuf *o);
 

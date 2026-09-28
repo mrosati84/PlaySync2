@@ -7,7 +7,7 @@ SRC     := $(wildcard src/*.c) vendor/cJSON/cJSON.c
 OBJ     := $(SRC:.c=.o)
 DEP     := $(OBJ:.o=.d)
 
-TESTBINS := tests/test_sync tests/test_proto
+TESTBINS := tests/test_sync tests/test_proto tests/test_robust
 TESTAUX  := tests/fake_mpv
 
 HDRS    := $(wildcard src/*.h) vendor/cJSON/cJSON.h
@@ -28,6 +28,9 @@ tests/test_sync: tests/test_sync.c src/sync.c $(HDRS)
 tests/test_proto: tests/test_proto.c src/proto.c vendor/cJSON/cJSON.c $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDLIBS)
 
+tests/test_robust: tests/test_robust.c src/net.c src/proto.c src/uuid.c vendor/cJSON/cJSON.c $(HDRS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDLIBS)
+
 tests/fake_mpv: tests/fake_mpv.c src/net.c src/timebase.c vendor/cJSON/cJSON.c $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $(filter %.c,$^) $(LDLIBS)
 
@@ -35,6 +38,8 @@ test: $(BIN) $(TESTBINS) $(TESTAUX)
 	@echo "== invariants ==";        sh tests/check_invariants.sh
 	@echo "== unit: sync ==";        ./tests/test_sync
 	@echo "== unit: proto ==";       ./tests/test_proto
+	@echo "== unit: robust ==";      ./tests/test_robust
+	@echo "== recv error ==";        sh tests/run_robust.sh
 	@echo "== server protocol ==";   sh tests/run_protocol.sh
 	@echo "== mpv exit ==";          sh tests/run_mpv_exit.sh
 	@echo "== redundant seek ==";    sh tests/run_redundant_seek.sh
@@ -46,6 +51,6 @@ e2e: $(BIN) $(TESTAUX)
 
 clean:
 	rm -f $(OBJ) $(DEP) $(BIN) $(TESTBINS) $(TESTAUX)
-	rm -f tests/*.d
+	rm -f tests/fail_recv.so tests/*.d
 
 -include $(DEP)
