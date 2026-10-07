@@ -41,6 +41,7 @@ test: $(BIN) $(TESTBINS) $(TESTAUX)
 	@echo "== unit: robust ==";      ./tests/test_robust
 	@echo "== recv error ==";        sh tests/run_robust.sh
 	@echo "== server protocol ==";   sh tests/run_protocol.sh
+	@echo "== slow reader ==";       sh tests/run_slow_reader.sh
 	@echo "== mpv exit ==";          sh tests/run_mpv_exit.sh
 	@echo "== redundant seek ==";    sh tests/run_redundant_seek.sh
 	@echo "== reconnect ==";         sh tests/run_reconnect.sh

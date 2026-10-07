@@ -166,10 +166,12 @@ static void client_send(struct client *c, char *msg)
         return;
     if (g_log_level >= 2)
         log_trace("srv <- %s", msg);
-    if (obuf_append_line(&c->out, msg, strlen(msg)) != 0) {
-        log_warn("client: out of memory queueing a message");
+    int r = obuf_append_line(&c->out, msg, strlen(msg));
+    if (r != 0) {
+        const char *why = (r == -2) ? "server is not reading" : "out of memory";
+        log_warn("client: cannot queue a message: %s", why);
         free(msg);
-        schedule_backoff(c, "out of memory");
+        schedule_backoff(c, why);
         return;
     }
     if (c->server_fd >= 0)

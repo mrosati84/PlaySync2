@@ -194,35 +194,67 @@ ssize_t net_recv(int fd, void *buf, size_t n)
     }
 }
 
+/* Bytes currently allocated by all output buffers in this process. */
+static size_t g_obuf_total = 0;
+
 void obuf_init(obuf *o)
 {
     o->buf = NULL;
     o->len = 0;
     o->cap = 0;
     o->off = 0;
+    o->limit = PS_OBUF_MAX;
+}
+
+static void obuf_release(obuf *o)
+{
+    free(o->buf);
+    g_obuf_total -= o->cap;
+    o->buf = NULL;
+    o->len = o->cap = o->off = 0;
 }
 
 void obuf_free(obuf *o)
 {
-    free(o->buf);
-    o->buf = NULL;
-    o->len = o->cap = o->off = 0;
+    obuf_release(o);
+}
+
+size_t obuf_total_allocated(void)
+{
+    return g_obuf_total;
 }
 
 /* Allocation hook for tests; NULL selects realloc. */
 void *(*obuf_grow_alloc)(void *, size_t) = NULL;
 
+/*
+ * Make room for extra bytes. 0 on success, -1 when the allocation fails or
+ * the size overflows, -2 when the per-buffer or process-wide limit would be
+ * exceeded. The buffer is unchanged on failure.
+ */
 static int obuf_grow(obuf *o, size_t extra)
 {
     if (o->off == o->len) {
         o->off = 0;
         o->len = 0;
     }
-    if (extra > SIZE_MAX - o->len)
+    if (extra > SIZE_MAX - (o->len - o->off))
         return -1; /* size_t overflow: the request can never be satisfied */
-    size_t need = o->len + extra;
-    if (need <= o->cap)
+    size_t pending = o->len - o->off;
+    if (o->limit > 0 && pending + extra > o->limit)
+        return -2;
+    if (o->len + extra <= o->cap)
         return 0;
+    /* Drop the already-sent prefix before considering a larger allocation,
+     * so growth follows outstanding bytes rather than historical traffic. */
+    if (o->off > 0) {
+        memmove(o->buf, o->buf + o->off, pending);
+        o->len = pending;
+        o->off = 0;
+        if (o->len + extra <= o->cap)
+            return 0;
+    }
+    size_t need = o->len + extra;
     size_t ncap = (o->cap == 0) ? 4096 : o->cap;
     while (ncap < need) {
         if (ncap > SIZE_MAX / 2) {
@@ -231,10 +263,15 @@ static int obuf_grow(obuf *o, size_t extra)
         }
         ncap *= 2;
     }
+    if (o->limit > 0 && ncap > o->limit)
+        ncap = o->limit; /* need <= limit was checked above */
+    if (ncap - o->cap > PS_OBUF_TOTAL_MAX - g_obuf_total)
+        return -2;
     void *(*alloc)(void *, size_t) = obuf_grow_alloc ? obuf_grow_alloc : realloc;
     char *nb = alloc(o->buf, ncap);
     if (nb == NULL)
         return -1;
+    g_obuf_total += ncap - o->cap;
     o->buf = nb;
     o->cap = ncap;
     return 0;
@@ -242,8 +279,9 @@ static int obuf_grow(obuf *o, size_t extra)
 
 int obuf_append(obuf *o, const void *data, size_t n)
 {
-    if (obuf_grow(o, n) != 0)
-        return -1;
+    int r = obuf_grow(o, n);
+    if (r != 0)
+        return r;
     if (n > 0)
         memcpy(o->buf + o->len, data, n);
     o->len += n;
@@ -256,8 +294,9 @@ int obuf_append_line(obuf *o, const char *msg, size_t len)
         return -1;
     /* Reserve the payload and the framing newline up front so a partial
      * frame is never queued; on failure the buffer is left unchanged. */
-    if (obuf_grow(o, len + 1) != 0)
-        return -1;
+    int r = obuf_grow(o, len + 1);
+    if (r != 0)
+        return r;
     if (len > 0)
         memcpy(o->buf + o->len, msg, len);
     o->len += len;
@@ -268,6 +307,11 @@ int obuf_append_line(obuf *o, const char *msg, size_t len)
 int obuf_pending(const obuf *o)
 {
     return o->len > o->off;
+}
+
+size_t obuf_pending_bytes(const obuf *o)
+{
+    return o->len - o->off;
 }
 
 int obuf_flush(int fd, obuf *o)
@@ -286,6 +330,9 @@ int obuf_flush(int fd, obuf *o)
     }
     o->off = 0;
     o->len = 0;
+    /* Do not keep a burst's high-water allocation around once drained. */
+    if (o->cap > PS_OBUF_KEEP)
+        obuf_release(o);
     return 0;
 }
 

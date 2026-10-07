@@ -21,6 +21,12 @@
 #define PS_MSG_MAX 65536
 #define PS_READ_CHUNK 16384
 
+/* Output backlog bounds: per connection, and across the whole process. */
+#define PS_OBUF_MAX ((size_t)1 << 20)         /* 1 MiB unsent per buffer */
+#define PS_OBUF_TOTAL_MAX ((size_t)32 << 20)  /* 32 MiB across all buffers */
+#define PS_OBUF_KEEP ((size_t)64 << 10)       /* release larger idle buffers */
+#define PS_DRAIN_TIMEOUT 5.0    /* closing connections must drain by then */
+
 #define PS_HB_INTERVAL 0.5      /* 2 Hz heartbeats */
 #define PS_PING_INTERVAL 5.0    /* client ping cadence */
 #define PS_LIVENESS_TIMEOUT 15.0 /* server reaps idle connections */

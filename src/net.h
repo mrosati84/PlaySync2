@@ -32,12 +32,17 @@ ssize_t net_recv(int fd, void *buf, size_t n);
 /*
  * Output buffer for non-blocking writes. Append complete framed messages;
  * flush when the fd is writable.
+ *
+ * Outstanding (unsent) bytes are bounded by `limit` (PS_OBUF_MAX after
+ * obuf_init; 0 means no per-buffer limit), and the allocations of all
+ * buffers in the process together never exceed PS_OBUF_TOTAL_MAX.
  */
 typedef struct {
     char *buf;
     size_t len;
     size_t cap;
     size_t off;
+    size_t limit;
 } obuf;
 
 void obuf_init(obuf *o);
@@ -45,11 +50,17 @@ void obuf_free(obuf *o);
 int obuf_append(obuf *o, const void *data, size_t n);
 /*
  * Append a complete framed line (payload plus a trailing '\n') atomically:
- * either the whole frame lands or nothing does. Returns 0 on success and -1
- * when the buffer cannot grow (message dropped, prior contents untouched).
+ * either the whole frame lands or nothing does. Returns 0 on success, -1
+ * when the buffer cannot grow (out of memory), and -2 when the per-buffer or
+ * process-wide backlog limit would be exceeded (the consumer is too slow).
+ * On failure the message is dropped and prior contents are untouched.
+ * obuf_append returns the same codes.
  */
 int obuf_append_line(obuf *o, const char *msg, size_t len);
 int obuf_pending(const obuf *o);
+size_t obuf_pending_bytes(const obuf *o);
+/* Bytes currently allocated by all output buffers in the process. */
+size_t obuf_total_allocated(void);
 
 /*
  * Test seam: allocation function used by the output buffer to grow.

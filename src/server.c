@@ -18,6 +18,7 @@
 typedef struct sconn {
     int fd;
     int closing;
+    double closing_since;
     int ready;
     char id[PS_ID_LEN];
     char name[PS_NAME_LEN];
@@ -46,14 +47,42 @@ static void on_signal(int sig)
     g_stop = 1;
 }
 
+/* Stop reading from c and close it once its output drains (or the drain
+ * deadline passes). */
+static void mark_closing(sconn *c)
+{
+    if (c->closing)
+        return;
+    c->closing = 1;
+    c->closing_since = tb_now();
+}
+
+/*
+ * Queue a framed message for c. When the queue cannot take it, c is closed:
+ * a slow consumer over its backlog limit has its backlog discarded so it is
+ * dropped promptly and its memory is released at once.
+ */
+static void conn_queue(sconn *c, const char *msg, size_t len, const char *what)
+{
+    int r = obuf_append_line(&c->out, msg, len);
+    if (r == 0)
+        return;
+    if (r == -2) {
+        log_warn("server: output backlog limit reached for member '%s' "
+                 "(%zu bytes queued, %zu buffered in total); dropping it",
+                 c->ready ? c->id : "?", obuf_pending_bytes(&c->out), obuf_total_allocated());
+        obuf_free(&c->out);
+    } else {
+        log_warn("server: out of memory queueing %s; closing connection", what);
+    }
+    mark_closing(c);
+}
+
 static void conn_send(sconn *c, char *msg)
 {
     if (msg == NULL)
         return;
-    if (obuf_append_line(&c->out, msg, strlen(msg)) != 0) {
-        log_warn("server: out of memory queueing a message; closing connection");
-        c->closing = 1;
-    }
+    conn_queue(c, msg, strlen(msg), "a message");
     free(msg);
 }
 
@@ -91,12 +120,9 @@ static void broadcast_roster(server *s)
         return;
     for (int i = 0; i < s->nconns; i++) {
         sconn *c = s->conns[i];
-        if (!c->ready)
+        if (!c->ready || c->closing)
             continue;
-        if (obuf_append_line(&c->out, msg, strlen(msg)) != 0) {
-            log_warn("server: out of memory queueing roster; closing connection");
-            c->closing = 1;
-        }
+        conn_queue(c, msg, strlen(msg), "roster");
     }
     free(msg);
 }
@@ -108,10 +134,7 @@ static void relay_except(server *s, sconn *from, const char *msg)
         sconn *c = s->conns[i];
         if (!c->ready || c == from || c->closing)
             continue;
-        if (obuf_append_line(&c->out, msg, len) != 0) {
-            log_warn("server: out of memory relaying message; closing connection");
-            c->closing = 1;
-        }
+        conn_queue(c, msg, len, "a relayed message");
     }
 }
 
@@ -145,7 +168,7 @@ static void reject(sconn *c, err_code code, const char *emsg)
     char *msg = proto_encode_error(code, emsg, 1);
     conn_send(c, msg);
     c->ready = 0;
-    c->closing = 1;
+    mark_closing(c);
     log_info("server: rejected connection: %s (%s)", err_name(code), emsg ? emsg : "");
 }
 
@@ -269,7 +292,7 @@ static void handle_line(server *s, sconn *c, const char *line, size_t len)
         log_info("server: member '%s' sent bye (%s)", c->id,
                  bye_reason[0] ? bye_reason : "unspecified");
         c->ready = 0;
-        c->closing = 1;
+        mark_closing(c);
     } else if (is_error) {
         log_warn("server: member '%s' reported an error", c->id);
     } else {
@@ -292,18 +315,18 @@ static void process_input(server *s, sconn *c)
             }
             if (lr < 0) {
                 conn_send(c, proto_encode_error(ERR_TOO_LARGE, "message exceeds 64 KiB", 1));
-                c->closing = 1;
+                mark_closing(c);
                 log_warn("server: member exceeded the 64 KiB message cap");
                 return;
             }
         } else if (r == -1) {
             if (c->lr.overflow) {
                 conn_send(c, proto_encode_error(ERR_TOO_LARGE, "message exceeds 64 KiB", 1));
-                c->closing = 1;
+                mark_closing(c);
                 log_warn("server: member exceeded the 64 KiB message cap");
             } else {
                 log_warn("server: read error on connection; closing");
-                c->closing = 1;
+                mark_closing(c);
             }
             return;
         } else {
@@ -414,6 +437,12 @@ int server_run(const server_config *cfg)
                 }
             }
             if (c->closing && !obuf_pending(&c->out)) {
+                close_conn(&s, c);
+                continue;
+            }
+            if (c->closing && (now - c->closing_since) > PS_DRAIN_TIMEOUT) {
+                log_info("server: dropping member '%s' whose output did not drain",
+                         c->id[0] ? c->id : "?");
                 close_conn(&s, c);
                 continue;
             }

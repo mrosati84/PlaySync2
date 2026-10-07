@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 static int checks = 0;
 static int fails = 0;
@@ -53,6 +55,81 @@ static void test_obuf_oom(void)
     CHECK(o.len == before + 6);
     CHECK(o.buf[o.len - 1] == '\n');
     obuf_free(&o);
+}
+
+/* F01: unsent output is bounded per buffer; a refused frame changes nothing. */
+static void test_obuf_limit(void)
+{
+    obuf o;
+    obuf_init(&o);
+    CHECK(o.limit == PS_OBUF_MAX);
+    o.limit = 8192;
+    char frame[1000];
+    memset(frame, 'f', sizeof(frame));
+    int r, n = 0;
+    while ((r = obuf_append_line(&o, frame, sizeof(frame))) == 0)
+        n++;
+    CHECK(r == -2);
+    CHECK(n == 8); /* 8 * 1001 fits in 8192, a ninth would not */
+    CHECK(obuf_pending_bytes(&o) == 8 * 1001);
+    CHECK(o.cap <= o.limit);
+
+    /* Once the consumer catches up the space is usable again, and the sent
+     * prefix is compacted away instead of growing the allocation. */
+    size_t cap = o.cap;
+    o.off = 5 * 1001;
+    CHECK(obuf_append_line(&o, frame, sizeof(frame)) == 0);
+    CHECK(o.cap == cap);
+    CHECK(o.off == 0);
+    CHECK(obuf_pending_bytes(&o) == 4 * 1001);
+    CHECK(o.buf[o.len - 1] == '\n');
+    obuf_free(&o);
+    CHECK(obuf_total_allocated() == 0);
+}
+
+/* F01: all output buffers together never exceed the process-wide cap. */
+static void test_obuf_total_cap(void)
+{
+    enum { NB = 64 };
+    static obuf bufs[NB];
+    static char chunk[256 << 10];
+    memset(chunk, 'c', sizeof(chunk));
+    int refused = 0;
+    for (int i = 0; i < NB; i++) {
+        obuf_init(&bufs[i]);
+        for (int k = 0; k < 4; k++)
+            if (obuf_append(&bufs[i], chunk, sizeof(chunk)) == -2)
+                refused = 1;
+        CHECK(obuf_total_allocated() <= PS_OBUF_TOTAL_MAX);
+    }
+    CHECK(refused);
+    for (int i = 0; i < NB; i++)
+        obuf_free(&bufs[i]);
+    CHECK(obuf_total_allocated() == 0);
+}
+
+/* F01: a drained buffer does not keep its high-water allocation. */
+static void test_obuf_release_after_drain(void)
+{
+    int sv[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+    net_set_nonblocking(sv[0]);
+    obuf o;
+    obuf_init(&o);
+    static char chunk[200 << 10];
+    memset(chunk, 'd', sizeof(chunk));
+    CHECK(obuf_append(&o, chunk, sizeof(chunk)) == 0);
+    CHECK(o.cap > PS_OBUF_KEEP);
+    char sink[65536];
+    int r, spins = 0;
+    while ((r = obuf_flush(sv[0], &o)) == 1 && spins++ < 1000)
+        (void)read(sv[1], sink, sizeof(sink));
+    CHECK(r == 0);
+    CHECK(o.cap == 0 && o.buf == NULL);
+    CHECK(obuf_total_allocated() == 0);
+    obuf_free(&o);
+    close(sv[0]);
+    close(sv[1]);
 }
 
 /* Item 2: hostile numbers never trigger an out-of-range double cast. */
@@ -115,6 +192,9 @@ static void test_recv_hard_error(void)
 int main(void)
 {
     test_obuf_oom();
+    test_obuf_limit();
+    test_obuf_total_cap();
+    test_obuf_release_after_drain();
     test_numeric_clamp();
     test_uuid_short_buffer();
     test_recv_hard_error();
