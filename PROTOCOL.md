@@ -204,11 +204,15 @@ The server is deliberately trivial. Its entire behaviour:
 
 1. **Accept.** Beyond `--max-members`, refuse with `error{session_full, fatal:true}`.
 2. **Handshake.** On `hello`, validate `v`, reject a duplicate `id` with
-   `error{duplicate_id, fatal:true}`, bind the connection to `{id, name, observer}`, reply
-   `welcome`, and broadcast `roster` to everyone.
+   `error{duplicate_id, fatal:true}`, reject an `{id, name, observer}` roster entry longer
+   than 1000 bytes once encoded with `error{too_large, fatal:true}` (so a full `welcome` or
+   `roster` always fits the message cap), bind the connection to `{id, name, observer}`,
+   reply `welcome`, and broadcast `roster` to everyone.
 3. **Relay.** Every `hb` and `intent` from a connection is forwarded to **every other**
    member with `from` set to the connection's bound id. Any `from` supplied by the client is
-   discarded. No other field is read, validated, or modified.
+   discarded. No other field is read, validated, or modified. A message that the stamped
+   `from` (or re-serialisation) grows past the 64 KiB cap is not relayed: the sender gets a
+   non-fatal `error{too_large}` and stays connected.
 4. **Answer.** `ping` → `pong`. Nothing else is generated.
 5. **Reject the unparseable.** A line that is not JSON gets `error{bad_json}`; a message
    whose `t` the server does not recognise gets `error{unknown_type}`. Neither is fatal and

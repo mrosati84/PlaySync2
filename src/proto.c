@@ -275,18 +275,40 @@ char *proto_encode_hello(const char *id, const char *name, int observer)
     return s;
 }
 
+static cJSON *member_object(const proto_member *member)
+{
+    cJSON *m = cJSON_CreateObject();
+    if (!m)
+        return NULL;
+    cJSON_AddStringToObject(m, "id", member->id);
+    cJSON_AddStringToObject(m, "name", member->name);
+    cJSON_AddBoolToObject(m, "observer", member->observer ? 1 : 0);
+    return m;
+}
+
+size_t proto_member_json_len(const proto_member *member)
+{
+    cJSON *m = member_object(member);
+    if (!m)
+        return 0;
+    char *s = cJSON_PrintUnformatted(m);
+    cJSON_Delete(m);
+    if (!s)
+        return 0;
+    size_t len = strlen(s);
+    free(s);
+    return len;
+}
+
 static cJSON *members_array(const proto_member *members, int n)
 {
     cJSON *arr = cJSON_CreateArray();
     if (!arr)
         return NULL;
     for (int i = 0; i < n; i++) {
-        cJSON *m = cJSON_CreateObject();
+        cJSON *m = member_object(&members[i]);
         if (!m)
             break;
-        cJSON_AddStringToObject(m, "id", members[i].id);
-        cJSON_AddStringToObject(m, "name", members[i].name);
-        cJSON_AddBoolToObject(m, "observer", members[i].observer ? 1 : 0);
         cJSON_AddItemToArray(arr, m);
     }
     return arr;

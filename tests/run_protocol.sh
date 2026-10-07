@@ -64,6 +64,14 @@ try:
     expect((recv_until(a, lambda m: m.get("t") == "welcome") or {}).get("t") == "welcome",
            "hello -> welcome (A)")
 
+    # F02: an id/name that would not fit the roster budget once escaped.
+    x = conn()
+    send(x, {"t": "hello", "v": 1, "id": "\u0001" * 63, "name": "\u0001" * 127,
+             "observer": False})
+    m = recv_until(x, lambda m: m.get("t") == "error")
+    expect(m is not None and m["code"] == "too_large" and m.get("fatal") is True,
+           "hello over the roster entry budget -> too_large")
+
     b = conn()
     send(b, {"t": "hello", "v": 1, "id": "b", "name": "B", "observer": False})
     expect((recv_until(b, lambda m: m.get("t") == "welcome") or {}).get("t") == "welcome",
@@ -109,6 +117,19 @@ try:
     m = recv_until(b, lambda m: m.get("t") == "intent")
     expect(m is not None and m.get("from") == "a" and m.get("act") == "pause",
            "intent relay discards client-supplied from")
+
+    # F02: a legal frame that stamping/escaping grows past the cap is not
+    # relayed; the sender gets a non-fatal too_large and stays connected.
+    raw = '{"t":"hb","pos":1,"state":"playing","speed":1,"joining":false,"pad":"%s"}'
+    grow = raw % ("x" * (65535 - len(raw % ""))) # exactly at the input cap
+    send(a, grow)
+    m = recv_until(a, lambda m: m.get("t") == "error")
+    expect(m is not None and m["code"] == "too_large" and not m.get("fatal"),
+           "message over the cap once relayed -> non-fatal too_large")
+    send(a, {"t": "intent", "act": "resume", "pos": 3.0})
+    m = recv_until(b, lambda m: m.get("t") in ("hb", "intent"))
+    expect(m is not None and m.get("t") == "intent" and m.get("act") == "resume",
+           "oversized relay dropped; recipient connected and served")
 
     big = '{"t":"hb","pad":"' + ("x" * 70000) + '"}'
     send(a, big)

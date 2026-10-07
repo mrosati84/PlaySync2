@@ -169,6 +169,34 @@ static void test_errors(void)
     CHECK(m.n == 4);
 }
 
+/* F02: with every entry at the hello budget, a full welcome/roster fits. */
+static void test_member_budget(void)
+{
+    proto_member m;
+    memset(m.id, '\x01', sizeof(m.id) - 1);
+    m.id[sizeof(m.id) - 1] = '\0';
+    memset(m.name, '\x01', sizeof(m.name) - 1);
+    m.name[sizeof(m.name) - 1] = '\0';
+    m.observer = 0;
+    size_t worst = proto_member_json_len(&m);
+    CHECK(worst > PS_MEMBER_JSON_MAX); /* control characters can exceed the budget */
+
+    snprintf(m.id, sizeof(m.id), "a");
+    snprintf(m.name, sizeof(m.name), "A");
+    CHECK(proto_member_json_len(&m) == strlen("{\"id\":\"a\",\"name\":\"A\",\"observer\":false}"));
+
+    /* Fixed welcome overhead with a worst-case session and "you". */
+    char hostile[PS_ID_LEN];
+    memset(hostile, '\x01', sizeof(hostile) - 1);
+    hostile[sizeof(hostile) - 1] = '\0';
+    char *s = proto_encode_welcome(hostile, hostile, NULL, 0);
+    CHECK(s != NULL);
+    size_t fixed = s ? strlen(s) : PS_MSG_MAX;
+    free(s);
+    /* n entries plus n-1 commas, plus the framing newline. */
+    CHECK(fixed + (size_t)PS_MAX_MEMBERS_CEIL * (PS_MEMBER_JSON_MAX + 1) + 1 <= PS_MSG_MAX);
+}
+
 static void test_names(void)
 {
     CHECK(strcmp(pstate_name(ST_SEEKING), "seeking") == 0);
@@ -186,6 +214,7 @@ int main(void)
     test_intent();
     test_handshake();
     test_ping_bye_error();
+    test_member_budget();
     test_errors();
     test_names();
     printf("%s: %d checks, %d failures\n", fails ? "FAIL" : "ok", checks, fails);

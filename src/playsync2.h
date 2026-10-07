@@ -20,6 +20,9 @@
 /* Message cap includes framing; the accumulator grows to this. */
 #define PS_MSG_MAX 65536
 #define PS_READ_CHUNK 16384
+/* Largest encoded roster entry ({"id":…,"name":…,"observer":…}) the server
+ * accepts at hello, so a full welcome/roster always fits within PS_MSG_MAX. */
+#define PS_MEMBER_JSON_MAX 1000
 
 /* Output backlog bounds: per connection, and across the whole process. */
 #define PS_OBUF_MAX ((size_t)1 << 20)         /* 1 MiB unsent per buffer */

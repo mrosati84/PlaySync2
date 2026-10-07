@@ -57,13 +57,25 @@ static void mark_closing(sconn *c)
     c->closing_since = tb_now();
 }
 
+/* Whether msg, once framed, fits within the shared message cap. */
+static int frame_fits(size_t len)
+{
+    return len < PS_MSG_MAX;
+}
+
 /*
  * Queue a framed message for c. When the queue cannot take it, c is closed:
  * a slow consumer over its backlog limit has its backlog discarded so it is
- * dropped promptly and its memory is released at once.
+ * dropped promptly and its memory is released at once. A message over the
+ * cap is never sent: every receiver would treat it as fatal.
  */
 static void conn_queue(sconn *c, const char *msg, size_t len, const char *what)
 {
+    if (!frame_fits(len)) {
+        log_error("server: refusing to send %s of %zu bytes (over the 64 KiB cap)", what,
+                  len + 1);
+        return;
+    }
     int r = obuf_append_line(&c->out, msg, len);
     if (r == 0)
         return;
@@ -193,6 +205,16 @@ static void handle_hello(server *s, sconn *c, const pmsg *m)
         reject(c, ERR_SESSION_FULL, "session is full");
         return;
     }
+    /* Bound each roster entry so welcome and roster always fit the cap. */
+    proto_member self;
+    snprintf(self.id, sizeof(self.id), "%s", m->id);
+    snprintf(self.name, sizeof(self.name), "%s", m->name);
+    self.observer = m->observer;
+    size_t entry = proto_member_json_len(&self);
+    if (entry == 0 || entry > PS_MEMBER_JSON_MAX) {
+        reject(c, ERR_TOO_LARGE, "id and name too long once encoded");
+        return;
+    }
     snprintf(c->id, sizeof(c->id), "%s", m->id);
     snprintf(c->name, sizeof(c->name), "%s", m->name);
     c->observer = m->observer;
@@ -236,11 +258,19 @@ static void handle_relay(server *s, sconn *c, const char *line, size_t len)
     cJSON_AddStringToObject(root, "from", c->id);
     char *msg = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (msg) {
+    if (msg == NULL)
+        return;
+    /* Stamping and re-serialising can grow a legal input past the cap; drop
+     * it here rather than relay a frame every recipient must reject. */
+    if (!frame_fits(strlen(msg))) {
+        log_warn("server: member '%s' sent a message over the 64 KiB cap once relayed; "
+                 "dropped", c->id);
+        conn_send(c, proto_encode_error(ERR_TOO_LARGE, "message exceeds 64 KiB once relayed", 0));
+    } else {
         relay_except(s, c, msg);
         s->relayed++;
-        free(msg);
     }
+    free(msg);
 }
 
 static void handle_line(server *s, sconn *c, const char *line, size_t len)

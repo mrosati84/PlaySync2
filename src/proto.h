@@ -53,6 +53,8 @@ char *proto_encode_hello(const char *id, const char *name, int observer);
 char *proto_encode_welcome(const char *session, const char *you,
                            const proto_member *members, int n);
 char *proto_encode_roster(const proto_member *members, int n);
+/* Length of one encoded roster entry, without framing; 0 on allocation failure. */
+size_t proto_member_json_len(const proto_member *member);
 char *proto_encode_hb(const char *from, int has_pos, double pos, pstate st,
                       double speed, int joining);
 char *proto_encode_intent(const char *from, intent_act act, double pos);
